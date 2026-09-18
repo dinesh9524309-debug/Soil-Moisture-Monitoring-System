@@ -1,0 +1,165 @@
+// ----- Libraries -------------------------------------------------
+#include <Wire.h>                     // I²C communication
+#include <Adafruit_GFX.h>             // Core graphics library
+#include <Adafruit_SSD1306.h>         // OLED driver
+#include <Arduino.h>
+
+// ================== USER SETTINGS ==================
+// If your relay/motor driver is ACTIVE-LOW (common with many relay modules),
+// set this to 1. If your driver is ACTIVE-HIGH (transistor board, MOSFET),
+// set this to 0.
+#define RELAY_ACTIVE_LOW 0
+
+// Moisture threshold (tune after calibration)
+int moistureThreshold = 600; // Higher means drier on typical resistive probes
+// ===================================================
+
+// ----- OLED configuration ---------------------------
+#define SCREEN_WIDTH 128   // OLED width, in pixels
+#define SCREEN_HEIGHT 64   // OLED height, in pixels
+#define OLED_RESET    -1   // Reset pin (not used with most modules)
+#define SCREEN_ADDRESS 0x3C
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// -------------- Pin configuration -----------------
+#define MOIST_A    A0
+#define MOTOR_PIN  2
+
+// -------------- State tracking ----------
+bool lastSoilState = true;   // true = DRY, false = WET
+int  lastMoistLevel = 0;
+
+// -------------- Prototypes --------------
+void updateOLED(int level, bool soilIsDry, const char* trend);
+int  readMoistAveraged(uint8_t pin, uint8_t samples = 10, uint16_t delayMs = 2);
+inline void motorOn();
+inline void motorOff();
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(MOTOR_PIN, OUTPUT);
+
+  // Ensure motor/relay is OFF at boot
+  motorOff();
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    // OLED init failed - halt
+    while (1) { delay(10); }
+  }
+
+  display.setTextColor(SSD1306_WHITE);
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("MOISTURE Monitor");
+  display.setCursor(0, 10);
+  display.println("Initializing...");
+  display.display();
+  delay(500);
+
+  // Initial averaged reading for a stable start
+  int initLevel = readMoistAveraged(MOIST_A, 15, 3);
+  bool initIsDry = (initLevel > moistureThreshold); // Flip sign if your sensor is inverted
+
+  lastSoilState  = initIsDry;
+  lastMoistLevel = initLevel;
+
+  if (initIsDry) {
+    motorOn();
+    Serial.println("Soil is dry – motor ON");
+  } else {
+    motorOff();
+    Serial.println("Soil is wet – motor OFF");
+  }
+
+  updateOLED(initLevel, initIsDry, "INIT");
+}
+
+  // -------- Soil state change -------
+void loop() {
+  int  currLevel    = readMoistAveraged(MOIST_A, 10, 2);
+  bool currSoilDry  = (currLevel > moistureThreshold); // Flip sign if needed
+
+  if (currSoilDry != lastSoilState) {
+    lastSoilState = currSoilDry;
+    if (currSoilDry) {
+      motorOn();
+      Serial.println("Soil is dry – motor ON");
+      updateOLED(currLevel, currSoilDry, "DRY");
+    } else {
+      motorOff();
+      Serial.println("Soil is wet – motor OFF");
+      updateOLED(currLevel, currSoilDry, "WET");
+    }
+  }
+
+  // -------- Moisture trend --------
+  if (currLevel != lastMoistLevel) {
+    if (currLevel > lastMoistLevel) {
+      // Reading increased -> typically drier for resistive sensors
+      Serial.print("MOISTURE DECREASING: ");
+      updateOLED(currLevel, currSoilDry, "DECREASING");
+    } else {
+      Serial.print("MOISTURE INCREASING: ");
+      updateOLED(currLevel, currSoilDry, "INCREASING");
+    }
+    Serial.println(currLevel);
+    lastMoistLevel = currLevel;
+  }
+
+  delay(200);
+}
+
+// -------- Helper: averaged analog read ------
+int readMoistAveraged(uint8_t pin, uint8_t samples, uint16_t delayMs) {
+  long sum = 0;
+  for (uint8_t i = 0; i < samples; i++) {
+    sum += analogRead(pin);
+    delay(delayMs);
+  }
+  return (int)(sum / samples);
+}
+
+// -------- Motor/Relay control (handles polarity) ------
+inline void motorOn() {
+#if RELAY_ACTIVE_LOW
+  digitalWrite(MOTOR_PIN, LOW);
+#else
+  digitalWrite(MOTOR_PIN, HIGH);
+#endif
+}
+
+inline void motorOff() {
+#if RELAY_ACTIVE_LOW
+  digitalWrite(MOTOR_PIN, HIGH);
+#else
+  digitalWrite(MOTOR_PIN, LOW);
+#endif
+}
+
+// -------- OLED FUNCTION ------
+void updateOLED(int level, bool soilIsDry, const char* trend) {
+  display.clearDisplay();
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println("MOISTURE Monitor");
+
+  display.setCursor(0, 16);
+  display.print("VALUE: ");
+  display.println(level);
+
+  display.setCursor(0, 28);
+  display.print("SOIL:  ");
+  display.println(soilIsDry ? "DRY" : "WET");
+
+  display.setCursor(0, 40);
+  display.print("Motor: ");
+  display.println(soilIsDry ? "ON" : "OFF");
+
+  display.setCursor(0, 52);
+  display.print("Trend: ");
+  display.println(trend);
+
+  display.display();
+}
