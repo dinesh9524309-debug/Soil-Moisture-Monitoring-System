@@ -20,6 +20,4 @@ Designed and tested in Proteus before touching hardware. Catching wiring and log
 
 Next step: moving it to real hardware with a relay-driven pump.
 
-Open to feedback and to embedded systems opportunities in Chennai.
-
 #EmbeddedSystems #Arduino #IoT #Proteus #ECE
